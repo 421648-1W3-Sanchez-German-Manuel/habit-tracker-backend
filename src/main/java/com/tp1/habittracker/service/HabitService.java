@@ -1,6 +1,5 @@
 package com.tp1.habittracker.service;
 
-import com.tp1.habittracker.domain.enums.Frequency;
 import com.tp1.habittracker.domain.model.Habit;
 import com.tp1.habittracker.dto.habit.CreateHabitRequest;
 import com.tp1.habittracker.dto.habit.UpdateHabitRequest;
