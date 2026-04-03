@@ -13,18 +13,6 @@ import reactor.netty.http.client.HttpClient;
 public class WebClientConfig {
 
     @Bean
-    @Qualifier("semanticCompareWebClient")
-    public WebClient semanticCompareWebClient(SemanticCompareProperties properties) {
-        HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Math.toIntExact(properties.getConnectTimeoutMs()))
-                .responseTimeout(Duration.ofMillis(properties.getReadTimeoutMs()));
-
-        return WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .build();
-    }
-
-    @Bean
     @Qualifier("ollamaWebClient")
     public WebClient ollamaWebClient(OllamaProperties properties) {
         HttpClient httpClient = HttpClient.create()
