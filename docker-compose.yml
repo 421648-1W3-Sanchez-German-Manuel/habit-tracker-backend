@@ -57,7 +57,19 @@ services:
     depends_on:
       - mongo
       - postgres
+      - ollama
+
+  # 🧠 NUEVO: Ollama
+  ollama:
+    image: ollama/ollama
+    container_name: habit-tracker-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
 
 volumes:
   mongo_data:
   postgres_data:
+  ollama_data:

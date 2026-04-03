@@ -13,12 +13,17 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.WeekFields;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.nio.ByteBuffer;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -64,6 +69,10 @@ public class HabitService {
         return habitRepository.findAllByUserIdOrderByCreatedAtDesc(validatedUserId);
     }
 
+    public List<Habit> getAllHabits() {
+        return habitRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt"));
+    }
+
     public Habit updateHabit(String authenticatedUserId, String habitId, UpdateHabitRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         String validatedUserId = Objects.requireNonNull(authenticatedUserId, "authenticated userId must not be null");
@@ -75,6 +84,8 @@ public class HabitService {
         existingHabit.setName(updatedName);
         existingHabit.setType(request.type());
         existingHabit.setFrequency(request.frequency());
+        // regenerate embedding when the name changes so it's kept in sync
+        existingHabit.setEmbedding(generateEmbeddingFor(existingHabit.getName()));
 
         // Regenerate embedding if name changed
         List<Double> embedding = ollamaClient.generateEmbedding(updatedName);
@@ -91,6 +102,34 @@ public class HabitService {
 
         habitLogRepository.deleteAllByHabitId(validatedHabitId);
         habitRepository.deleteById(validatedHabitId);
+    }
+
+    // Generate a simple deterministic embedding vector for internal use.
+    // This uses SHA-256 of the input text and converts to a fixed-size vector of doubles.
+    private List<Double> generateEmbeddingFor(String text) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(text.getBytes());
+            List<Double> vector = new ArrayList<>();
+            // produce 8-dimension vector by grouping hash bytes
+            ByteBuffer buffer = ByteBuffer.wrap(hash);
+            for (int i = 0; i < 8; i++) {
+                long piece = buffer.getLong();
+                vector.add((double) (piece % 1000000) / 1000000.0);
+            }
+            return vector;
+        } catch (NoSuchAlgorithmException e) {
+            // fallback deterministic pseudo-random using UUID
+            UUID u = UUID.nameUUIDFromBytes(text.getBytes());
+            List<Double> vector = new ArrayList<>();
+            long msb = u.getMostSignificantBits();
+            long lsb = u.getLeastSignificantBits();
+            for (int i = 0; i < 8; i++) {
+                long val = (i % 2 == 0) ? msb : lsb;
+                vector.add((double) (Math.abs(val) % 1000000) / 1000000.0);
+            }
+            return vector;
+        }
     }
 
     public int calculateCurrentStreak(String authenticatedUserId, String habitId) {
