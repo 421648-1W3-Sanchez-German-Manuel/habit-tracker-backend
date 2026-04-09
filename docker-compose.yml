@@ -4,7 +4,7 @@ services:
     container_name: habit-tracker-mongo
     restart: always
     ports:
-      - "27017:27017"
+      - "27018:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
@@ -17,7 +17,7 @@ services:
     container_name: habit-tracker-postgres
     restart: always
     ports:
-      - "5432:5432"
+      - "5434:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -39,26 +39,6 @@ services:
     depends_on:
       - mongo
 
-  app:
-    build: .
-    container_name: habit-tracker-app
-    ports:
-      - "8080:8080"
-    environment:
-      SPRING_DATA_MONGODB_URI: ${SPRING_DATA_MONGODB_URI}
-      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
-      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
-      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
-      SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO}
-      SPRING_JPA_SHOW_SQL: ${SPRING_JPA_SHOW_SQL}
-      APP_JWT_SECRET: ${APP_JWT_SECRET}
-      APP_JWT_EXPIRATION_MS: ${APP_JWT_EXPIRATION_MS}
-      APP_SEED_ENABLED: ${APP_SEED_ENABLED}
-    depends_on:
-      - mongo
-      - postgres
-      - ollama
-
   # 🧠 NUEVO: Ollama
   ollama:
     image: ollama/ollama
@@ -68,6 +48,7 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
+#    command: sh -c "ollama serve & sleep 5 && ollama pull llama3 && wait"
 
 volumes:
   mongo_data:

@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -31,6 +32,7 @@ public class StartupDataSeeder implements CommandLineRunner {
     private final HabitRepository habitRepository;
     private final HabitLogRepository habitLogRepository;
     private final OllamaClient ollamaClient;
+    private final PasswordEncoder passwordEncoder;
 
     @Override
     public void run(String... args) {
@@ -44,7 +46,7 @@ public class StartupDataSeeder implements CommandLineRunner {
         User user = userRepository.save(User.builder()
                 .username("demo_user")
                 .email("demo.user@example.com")
-                .password("seed-password")
+                .password(passwordEncoder.encode("seed-password"))
                 .build());
 
                 if (user == null || user.getId() == null) {

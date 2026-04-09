@@ -161,17 +161,20 @@ Persistence model:
 
 - Java 21
 - Maven 3.9+
-- Docker Desktop
+- Docker Desktop or Docker Engine with Compose support
 
-### 1) Start Docker services
+### 1) Start infrastructure services
 
 ```bash
-docker compose up -d mongo postgres mongo-express
+docker compose up -d mongo postgres mongo-express ollama
 ```
 
-MongoDB will be available at `localhost:27017`.
-PostgreSQL will be available at `localhost:5432`.
+MongoDB will be available at `localhost:27018`.
+PostgreSQL will be available at `localhost:5434`.
 Mongo Express UI will be available at `http://localhost:8081`.
+Ollama will be available at `http://localhost:11434`.
+
+The backend is no longer started by Docker Compose. Run it separately from this folder with Maven.
 
 ### 2) Configure `.env`
 
@@ -189,7 +192,7 @@ Bash:
 cp .env.example .env
 ```
 
-Required variables for Docker Compose and app startup:
+Required variables for Docker Compose and host-run app startup:
 
 ```env
 MONGO_INITDB_ROOT_USERNAME=change_me_mongo_user
@@ -205,8 +208,8 @@ ME_CONFIG_MONGODB_ADMINPASSWORD=change_me_mongo_password
 ME_CONFIG_MONGODB_SERVER=mongo
 ME_CONFIG_MONGODB_AUTH_DATABASE=admin
 
-SPRING_DATA_MONGODB_URI=mongodb://change_me_mongo_user:change_me_mongo_password@mongo:27017/habitdb?authSource=admin
-SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/habit_tracker
+SPRING_DATA_MONGODB_URI=mongodb://change_me_mongo_user:change_me_mongo_password@localhost:27018/habitdb?authSource=admin
+SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5434/habit_tracker
 SPRING_DATASOURCE_USERNAME=change_me_pg_user
 SPRING_DATASOURCE_PASSWORD=change_me_pg_password
 SPRING_JPA_HIBERNATE_DDL_AUTO=update
@@ -214,6 +217,7 @@ SPRING_JPA_SHOW_SQL=true
 APP_JWT_SECRET=change_me_jwt_secret_at_least_32_chars
 APP_JWT_EXPIRATION_MS=86400000
 APP_SEED_ENABLED=true
+APP_OLLAMA_BASE_URL=http://localhost:11434
 ```
 
 Security note: do not commit real secrets. Keep real values only in local `.env`.
