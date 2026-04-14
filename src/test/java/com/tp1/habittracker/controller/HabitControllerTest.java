@@ -21,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 
 class HabitControllerTest {
 
@@ -99,5 +100,54 @@ class HabitControllerTest {
         assertEquals(1, response.size());
         assertEquals("habit-default", response.get(0).id());
         assertTrue(response.get(0).name().equals("Drink water"));
+    }
+
+    @Test
+    void addDefaultHabitToCurrentUserReturnsCreatedWhenHabitIsNew() {
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn("user-1");
+
+        Habit habit = Habit.builder()
+                .id("habit-user-1")
+                .userId("user-1")
+                .name("Drink water")
+                .type(HabitType.BOOLEAN)
+                .frequency(Frequency.DAILY)
+                .createdAt(Instant.now())
+                .isDefault(false)
+                .build();
+
+        when(habitService.addDefaultHabitToUser("user-1", "default-1"))
+                .thenReturn(new HabitService.AddDefaultHabitResult(habit, true));
+
+        ResponseEntity<HabitResponse> response = controller.addDefaultHabitToCurrentUser("default-1", authentication);
+
+        assertEquals(HttpStatus.CREATED, response.getStatusCode());
+        assertEquals("habit-user-1", response.getBody().id());
+        assertEquals("user-1", response.getBody().userId());
+    }
+
+    @Test
+    void addDefaultHabitToCurrentUserReturnsOkWhenHabitAlreadyExists() {
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn("user-1");
+
+        Habit existingHabit = Habit.builder()
+                .id("habit-existing")
+                .userId("user-1")
+                .name("Read pages")
+                .type(HabitType.NUMBER)
+                .frequency(Frequency.DAILY)
+                .createdAt(Instant.now())
+                .isDefault(false)
+                .build();
+
+        when(habitService.addDefaultHabitToUser("user-1", "default-2"))
+                .thenReturn(new HabitService.AddDefaultHabitResult(existingHabit, false));
+
+        ResponseEntity<HabitResponse> response = controller.addDefaultHabitToCurrentUser("default-2", authentication);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals("habit-existing", response.getBody().id());
     }
 }

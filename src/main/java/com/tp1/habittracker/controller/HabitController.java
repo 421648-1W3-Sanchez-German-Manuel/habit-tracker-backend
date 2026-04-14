@@ -70,6 +70,20 @@ public class HabitController {
                 .toList();
     }
 
+        @PostMapping("/defaults/{defaultHabitId}/users/me")
+        public ResponseEntity<HabitResponse> addDefaultHabitToCurrentUser(
+            @PathVariable String defaultHabitId,
+            Authentication authentication
+        ) {
+        HabitService.AddDefaultHabitResult result = habitService.addDefaultHabitToUser(
+            extractAuthenticatedUserId(authentication),
+            defaultHabitId
+        );
+
+        HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
+        return ResponseEntity.status(status).body(toResponse(result.habit()));
+        }
+
     @GetMapping("/{habitId}/streak")
     public ResponseEntity<Integer> getCurrentStreak(@PathVariable String habitId, Authentication authentication) {
         int streak = habitService.calculateCurrentStreak(extractAuthenticatedUserId(authentication), habitId);

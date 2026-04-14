@@ -1,7 +1,9 @@
 package com.tp1.habittracker.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -189,6 +191,102 @@ class HabitServiceTest {
         assertEquals("default-1", habits.get(0).getId());
         verify(habitRepository, times(1)).findAllByIsDefaultTrueOrderByCreatedAtDesc();
     }
+
+        @Test
+        void addDefaultHabitToUserCreatesHabitWhenNoDuplicateExists() {
+        String userId = UUID.randomUUID().toString();
+        Habit defaultHabit = Habit.builder()
+            .id("default-1")
+            .userId(null)
+            .name("Drink water")
+            .type(HabitType.BOOLEAN)
+            .frequency(Frequency.DAILY)
+            .isDefault(true)
+            .embedding(List.of(0.1, 0.2, 0.3))
+            .build();
+
+        when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitRepository.findByIdAndIsDefaultTrue("default-1")).thenReturn(Optional.of(defaultHabit));
+        when(habitRepository.findFirstByUserIdAndNameIgnoreCaseAndTypeAndFrequency(
+            userId,
+            "Drink water",
+            HabitType.BOOLEAN,
+            Frequency.DAILY
+        )).thenReturn(Optional.empty());
+        when(habitRepository.save(any(Habit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        HabitService.AddDefaultHabitResult result = habitService.addDefaultHabitToUser(userId, "default-1");
+
+        assertTrue(result.created());
+        assertEquals(userId, result.habit().getUserId());
+        assertFalse(result.habit().isDefault());
+        assertEquals("Drink water", result.habit().getName());
+        assertEquals(HabitType.BOOLEAN, result.habit().getType());
+        assertEquals(Frequency.DAILY, result.habit().getFrequency());
+        assertEquals(defaultHabit.getEmbedding(), result.habit().getEmbedding());
+        verify(habitRepository, times(1)).save(any(Habit.class));
+        }
+
+        @Test
+        void addDefaultHabitToUserReturnsExistingHabitWhenDuplicateExists() {
+        String userId = UUID.randomUUID().toString();
+        Habit defaultHabit = Habit.builder()
+            .id("default-1")
+            .userId(null)
+            .name("Read pages")
+            .type(HabitType.NUMBER)
+            .frequency(Frequency.DAILY)
+            .isDefault(true)
+            .build();
+        Habit existingUserHabit = Habit.builder()
+            .id("user-habit-1")
+            .userId(userId)
+            .name("Read pages")
+            .type(HabitType.NUMBER)
+            .frequency(Frequency.DAILY)
+            .isDefault(false)
+            .build();
+
+        when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitRepository.findByIdAndIsDefaultTrue("default-1")).thenReturn(Optional.of(defaultHabit));
+        when(habitRepository.findFirstByUserIdAndNameIgnoreCaseAndTypeAndFrequency(
+            userId,
+            "Read pages",
+            HabitType.NUMBER,
+            Frequency.DAILY
+        )).thenReturn(Optional.of(existingUserHabit));
+
+        HabitService.AddDefaultHabitResult result = habitService.addDefaultHabitToUser(userId, "default-1");
+
+        assertFalse(result.created());
+        assertEquals("user-habit-1", result.habit().getId());
+        verify(habitRepository, times(0)).save(any(Habit.class));
+        }
+
+        @Test
+        void addDefaultHabitToUserThrowsWhenDefaultHabitDoesNotExist() {
+        String userId = UUID.randomUUID().toString();
+
+        when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitRepository.findByIdAndIsDefaultTrue("missing-default")).thenReturn(Optional.empty());
+
+        assertThrows(
+            ResourceNotFoundException.class,
+            () -> habitService.addDefaultHabitToUser(userId, "missing-default")
+        );
+        }
+
+        @Test
+        void addDefaultHabitToUserThrowsWhenUserDoesNotExist() {
+        String userId = UUID.randomUUID().toString();
+
+        when(userRepository.existsById(UUID.fromString(userId))).thenReturn(false);
+
+        assertThrows(
+            ResourceNotFoundException.class,
+            () -> habitService.addDefaultHabitToUser(userId, "default-1")
+        );
+        }
 
         @Test
         void createHabitThrowsWhenSimilarUserHabitExists() {

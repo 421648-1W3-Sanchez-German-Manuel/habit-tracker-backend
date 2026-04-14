@@ -33,6 +33,9 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class HabitService {
 
+    public record AddDefaultHabitResult(Habit habit, boolean created) {
+    }
+
     private final HabitRepository habitRepository;
     private final UserRepository userRepository;
     private final HabitLogRepository habitLogRepository;
@@ -101,6 +104,44 @@ public class HabitService {
 
     public List<Habit> getDefaultHabits() {
         return habitRepository.findAllByIsDefaultTrueOrderByCreatedAtDesc();
+    }
+
+    public AddDefaultHabitResult addDefaultHabitToUser(String authenticatedUserId, String defaultHabitId) {
+        String validatedUserId = Objects.requireNonNull(authenticatedUserId, "authenticated userId must not be null");
+        String validatedDefaultHabitId = Objects.requireNonNull(defaultHabitId, "defaultHabitId must not be null");
+
+        if (!userExists(validatedUserId)) {
+            throw new ResourceNotFoundException("User not found with id: " + validatedUserId);
+        }
+
+        Habit defaultHabit = habitRepository.findByIdAndIsDefaultTrue(validatedDefaultHabitId)
+                .orElseThrow(() -> new ResourceNotFoundException("Default habit not found with id: " + validatedDefaultHabitId));
+
+        Habit existingHabit = habitRepository
+                .findFirstByUserIdAndNameIgnoreCaseAndTypeAndFrequency(
+                        validatedUserId,
+                        defaultHabit.getName(),
+                        defaultHabit.getType(),
+                        defaultHabit.getFrequency()
+                )
+                .orElse(null);
+
+        if (existingHabit != null) {
+            return new AddDefaultHabitResult(existingHabit, false);
+        }
+
+        Habit newUserHabit = Habit.builder()
+                .userId(validatedUserId)
+                .isDefault(false)
+                .name(defaultHabit.getName())
+                .type(defaultHabit.getType())
+                .frequency(defaultHabit.getFrequency())
+                .createdAt(Instant.now())
+                .embedding(defaultHabit.getEmbedding() == null ? null : new ArrayList<>(defaultHabit.getEmbedding()))
+                .build();
+
+        Habit savedHabit = habitRepository.save(newUserHabit);
+        return new AddDefaultHabitResult(savedHabit, true);
     }
 
     public Habit updateHabit(String authenticatedUserId, String habitId, UpdateHabitRequest request) {
