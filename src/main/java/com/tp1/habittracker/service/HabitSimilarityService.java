@@ -6,6 +6,7 @@ import com.tp1.habittracker.repository.HabitRepository;
 import com.tp1.habittracker.util.SimilarityUtils;
 import java.util.List;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -49,6 +50,37 @@ public class HabitSimilarityService {
         return findBestMatch(newHabitEmbedding, candidates);
     }
 
+    public Optional<HabitSimilarityMatch> findMostSimilarHabitForUserOrDefault(String userId, String newHabitName) {
+        Objects.requireNonNull(userId, "userId must not be null");
+        Objects.requireNonNull(newHabitName, "newHabitName must not be null");
+
+        if (newHabitName.isBlank()) {
+            return Optional.empty();
+        }
+
+        List<Habit> candidates = habitRepository.findAllByUserIdOrIsDefaultTrue(userId);
+        Optional<HabitSimilarityMatch> deterministicMatch = findDeterministicMatch(newHabitName, candidates);
+
+        if (deterministicMatch.isPresent()) {
+            return deterministicMatch;
+        }
+
+        List<Double> newHabitEmbedding = ollamaClient.generateEmbedding(newHabitName);
+        return findBestMatch(newHabitEmbedding, candidates);
+    }
+
+    public Optional<Habit> findDeterministicDuplicateForUserOrDefault(String userId, String newHabitName) {
+        Objects.requireNonNull(userId, "userId must not be null");
+        Objects.requireNonNull(newHabitName, "newHabitName must not be null");
+
+        if (newHabitName.isBlank()) {
+            return Optional.empty();
+        }
+
+        List<Habit> candidates = habitRepository.findAllByUserIdOrIsDefaultTrue(userId);
+        return findDeterministicMatch(newHabitName, candidates).map(HabitSimilarityMatch::habit);
+    }
+
     private Optional<HabitSimilarityMatch> findBestMatch(List<Double> newHabitEmbedding, List<Habit> candidates) {
         return candidates.stream()
                 .filter(habit -> habit.getEmbedding() != null && !habit.getEmbedding().isEmpty())
@@ -65,6 +97,46 @@ public class HabitSimilarityService {
         } catch (IllegalArgumentException ex) {
             return Optional.empty();
         }
+    }
+
+    private Optional<HabitSimilarityMatch> findDeterministicMatch(String newHabitName, List<Habit> candidates) {
+        String normalizedName = normalizeName(newHabitName);
+
+        if (normalizedName.isBlank()) {
+            return Optional.empty();
+        }
+
+        return candidates.stream()
+                .filter(candidate -> normalizeName(candidate.getName()).equals(normalizedName))
+                .findFirst()
+                .map(candidate -> new HabitSimilarityMatch(candidate, 1.0d));
+    }
+
+    private String normalizeName(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        String normalized = value.toLowerCase(Locale.ROOT).trim().replaceAll("[^\\p{IsAlphabetic}\\s]", " ");
+        StringBuilder builder = new StringBuilder();
+
+        for (String token : normalized.split("\\s+")) {
+            if (token.isBlank()) {
+                continue;
+            }
+
+            if (token.length() < 3) {
+                continue;
+            }
+
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+
+            builder.append(token);
+        }
+
+        return builder.toString();
     }
 
     public record HabitSimilarityMatch(Habit habit, double score) {

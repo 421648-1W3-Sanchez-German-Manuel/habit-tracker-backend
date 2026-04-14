@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -190,6 +191,46 @@ class HabitSimilarityServiceTest {
 
         assertTrue(result.isEmpty());
     }
+
+        @Test
+        void findMostSimilarHabitForUserOrDefaultReturnsExactMatchBeforeSemanticSearch() {
+        Habit defaultHabit = Habit.builder()
+            .id("habit-default")
+            .userId(null)
+            .isDefault(true)
+            .name("Drink 2lt of water")
+            .embedding(List.of(0.1, 0.2, 0.3))
+            .build();
+
+        when(habitRepository.findAllByUserIdOrIsDefaultTrue("user-1")).thenReturn(List.of(defaultHabit));
+
+        Optional<HabitSimilarityService.HabitSimilarityMatch> result =
+            service.findMostSimilarHabitForUserOrDefault("user-1", "Drink water");
+
+        assertTrue(result.isPresent());
+        assertEquals("habit-default", result.get().habit().getId());
+        assertEquals(1.0d, result.get().score());
+        verifyNoInteractions(ollamaClient);
+        }
+
+        @Test
+        void findMostSimilarHabitForUserOrDefaultIsCaseAndWhitespaceInsensitiveForExactMatches() {
+        Habit userHabit = Habit.builder()
+            .id("habit-user")
+            .userId("user-1")
+            .name("Drink 2lt of water")
+            .embedding(List.of(0.1, 0.2, 0.3))
+            .build();
+
+        when(habitRepository.findAllByUserIdOrIsDefaultTrue("user-1")).thenReturn(List.of(userHabit));
+
+        Optional<HabitSimilarityService.HabitSimilarityMatch> result =
+            service.findMostSimilarHabitForUserOrDefault("user-1", "  drink water  ");
+
+        assertTrue(result.isPresent());
+        assertEquals("habit-user", result.get().habit().getId());
+        verifyNoInteractions(ollamaClient);
+        }
 
     @Test
     void findMostSimilarHabitSelectsBestMatchWhenMultipleAboveThreshold() {

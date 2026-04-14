@@ -2,8 +2,10 @@ package com.tp1.habittracker.controller;
 
 import com.tp1.habittracker.domain.model.Habit;
 import com.tp1.habittracker.dto.habit.CheckSimilarityRequest;
+import com.tp1.habittracker.dto.habit.CheckSimilarityResponse;
 import com.tp1.habittracker.dto.habit.CreateHabitRequest;
 import com.tp1.habittracker.dto.habit.HabitResponse;
+import com.tp1.habittracker.dto.habit.HabitStreakResponse;
 import com.tp1.habittracker.dto.habit.UpdateHabitRequest;
 import com.tp1.habittracker.exception.ResourceNotFoundException;
 import com.tp1.habittracker.service.HabitSimilarityService;
@@ -90,6 +92,11 @@ public class HabitController {
         return ResponseEntity.ok(streak);
     }
 
+    @GetMapping("/with-streaks")
+    public List<HabitStreakResponse> getHabitsWithStreaks(Authentication authentication) {
+        return habitService.getHabitsWithStreaks(extractAuthenticatedUserId(authentication));
+    }
+
     @GetMapping("/{habitId}/completion")
     public ResponseEntity<Double> getCompletionLast7Days(@PathVariable String habitId, Authentication authentication) {
         double completion = habitService.calculateCompletionLast7Days(extractAuthenticatedUserId(authentication), habitId);
@@ -107,13 +114,19 @@ public class HabitController {
     }
 
     @PostMapping("/check-similarity")
-    public ResponseEntity<?> checkSimilarity(@Valid @RequestBody CheckSimilarityRequest request) {
-        if (request == null) {
-            throw new IllegalArgumentException("Similarity request is required");
-        }
+    public ResponseEntity<?> checkSimilarity(
+            Authentication authentication,
+            @Valid @RequestBody CheckSimilarityRequest request
+    ) {
+        String authenticatedUserId = extractAuthenticatedUserId(authentication);
 
-        return habitSimilarityService.findMostSimilarHabit(request.name())
-                .<ResponseEntity<?>>map(habit -> ResponseEntity.ok(toResponse(habit)))
+        return habitSimilarityService.findMostSimilarHabitForUserOrDefault(authenticatedUserId, request.name())
+                .<ResponseEntity<?>>map(match -> {
+                    Habit similarHabit = match.habit();
+                    String belongsTo = similarHabit.isDefault() ? "Default Habits" : "My Habits";
+
+                    return ResponseEntity.ok(new CheckSimilarityResponse(toResponse(similarHabit), belongsTo));
+                })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("message", "No similar habit exists")));
     }
@@ -135,6 +148,7 @@ public class HabitController {
         return new HabitResponse(
                 habit.getId(),
                 habit.getUserId(),
+            habit.getSourceDefaultHabitId(),
                 habit.getName(),
                 habit.getType(),
                 habit.getFrequency(),

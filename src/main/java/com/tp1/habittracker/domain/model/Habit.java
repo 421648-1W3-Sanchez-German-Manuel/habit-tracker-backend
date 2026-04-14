@@ -27,6 +27,8 @@ public class Habit {
 
     private boolean isDefault;
 
+    private String sourceDefaultHabitId;
+
     private String name;
 
     private HabitType type;

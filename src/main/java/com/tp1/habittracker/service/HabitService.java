@@ -2,6 +2,7 @@ package com.tp1.habittracker.service;
 
 import com.tp1.habittracker.domain.model.Habit;
 import com.tp1.habittracker.dto.habit.CreateHabitRequest;
+import com.tp1.habittracker.dto.habit.HabitStreakResponse;
 import com.tp1.habittracker.dto.habit.UpdateHabitRequest;
 import com.tp1.habittracker.exception.DuplicateResourceException;
 import com.tp1.habittracker.exception.ResourceNotFoundException;
@@ -13,6 +14,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.temporal.WeekFields;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -36,6 +38,9 @@ public class HabitService {
     public record AddDefaultHabitResult(Habit habit, boolean created) {
     }
 
+    private record StreakSnapshot(int currentStreak, LocalDate lastCompletedAt) {
+    }
+
     private final HabitRepository habitRepository;
     private final UserRepository userRepository;
     private final HabitLogRepository habitLogRepository;
@@ -51,33 +56,22 @@ public class HabitService {
             throw new ResourceNotFoundException("User not found with id: " + userId);
         }
 
+        habitSimilarityService.findDeterministicDuplicateForUserOrDefault(userId, normalizedName)
+            .ifPresent(similarHabit -> {
+                throwDuplicateResourceException(similarHabit, 1.0d, "EXACT");
+            });
+
         List<Double> embedding = ollamaClient.generateEmbedding(normalizedName);
 
         habitSimilarityService.findMostSimilarHabitForUserOrDefault(userId, embedding)
             .ifPresent(match -> {
-                Habit similarHabit = match.habit();
-                Map<String, Object> similarHabitDetails = new HashMap<>();
-                similarHabitDetails.put("id", similarHabit.getId());
-                similarHabitDetails.put("userId", similarHabit.getUserId());
-                similarHabitDetails.put("name", similarHabit.getName());
-                similarHabitDetails.put("type", similarHabit.getType());
-                similarHabitDetails.put("frequency", similarHabit.getFrequency());
-                similarHabitDetails.put("createdAt", similarHabit.getCreatedAt());
-                similarHabitDetails.put("isDefault", similarHabit.isDefault());
-
-                Map<String, Object> details = new HashMap<>();
-                details.put("similarityScore", match.score());
-                details.put("similarHabit", similarHabitDetails);
-
-                throw new DuplicateResourceException(
-                    "Similar habit found: " + similarHabit.getName(),
-                    details
-                );
+                throwDuplicateResourceException(match.habit(), match.score(), "SEMANTIC");
             });
 
         Habit habit = Habit.builder()
                 .userId(userId)
             .isDefault(false)
+                .sourceDefaultHabitId(null)
                 .name(normalizedName)
                 .type(request.type())
                 .frequency(request.frequency())
@@ -88,6 +82,27 @@ public class HabitService {
         return habitRepository.save(habit);
     }
 
+    private void throwDuplicateResourceException(Habit similarHabit, double similarityScore, String matchType) {
+        Map<String, Object> similarHabitDetails = new HashMap<>();
+        similarHabitDetails.put("id", similarHabit.getId());
+        similarHabitDetails.put("userId", similarHabit.getUserId());
+        similarHabitDetails.put("name", similarHabit.getName());
+        similarHabitDetails.put("type", similarHabit.getType());
+        similarHabitDetails.put("frequency", similarHabit.getFrequency());
+        similarHabitDetails.put("createdAt", similarHabit.getCreatedAt());
+        similarHabitDetails.put("isDefault", similarHabit.isDefault());
+
+        Map<String, Object> details = new HashMap<>();
+        details.put("matchType", matchType);
+        details.put("similarityScore", similarityScore);
+        details.put("similarHabit", similarHabitDetails);
+
+        throw new DuplicateResourceException(
+                "Similar habit found: " + similarHabit.getName(),
+                details
+        );
+    }
+
     public List<Habit> getHabitsByUserId(String authenticatedUserId) {
         String validatedUserId = Objects.requireNonNull(authenticatedUserId, "authenticated userId must not be null");
 
@@ -96,6 +111,24 @@ public class HabitService {
         }
 
         return habitRepository.findAllByUserIdOrderByCreatedAtDesc(validatedUserId);
+    }
+
+    public List<HabitStreakResponse> getHabitsWithStreaks(String authenticatedUserId) {
+        String validatedUserId = Objects.requireNonNull(authenticatedUserId, "authenticated userId must not be null");
+
+        List<Habit> habits = getHabitsByUserId(validatedUserId);
+        List<HabitStreakResponse> habitsWithStreaks = new ArrayList<>(habits.size());
+
+        for (Habit habit : habits) {
+            StreakSnapshot snapshot = computeStreakSnapshot(habit);
+            habitsWithStreaks.add(new HabitStreakResponse(
+                    habit.getId(),
+                    snapshot.currentStreak(),
+                    snapshot.lastCompletedAt()
+            ));
+        }
+
+        return habitsWithStreaks;
     }
 
     public List<Habit> getAllHabits() {
@@ -133,6 +166,7 @@ public class HabitService {
         Habit newUserHabit = Habit.builder()
                 .userId(validatedUserId)
                 .isDefault(false)
+            .sourceDefaultHabitId(validatedDefaultHabitId)
                 .name(defaultHabit.getName())
                 .type(defaultHabit.getType())
                 .frequency(defaultHabit.getFrequency())
@@ -152,13 +186,14 @@ public class HabitService {
         Habit existingHabit = getOwnedHabitOrThrow(validatedUserId, validatedHabitId);
 
         String updatedName = request.name().trim();
+
+        if (existingHabit.getSourceDefaultHabitId() != null) {
+            throw new IllegalArgumentException("Default habits cannot be edited");
+        }
+
         existingHabit.setName(updatedName);
         existingHabit.setType(request.type());
         existingHabit.setFrequency(request.frequency());
-        // regenerate embedding when the name changes so it's kept in sync
-        existingHabit.setEmbedding(generateEmbeddingFor(existingHabit.getName()));
-
-        // Regenerate embedding if name changed
         List<Double> embedding = ollamaClient.generateEmbedding(updatedName);
         existingHabit.setEmbedding(embedding);
 
@@ -206,20 +241,8 @@ public class HabitService {
     public int calculateCurrentStreak(String authenticatedUserId, String habitId) {
         String validatedUserId = Objects.requireNonNull(authenticatedUserId, "authenticated userId must not be null");
         String validatedHabitId = Objects.requireNonNull(habitId, "habitId must not be null");
-        LocalDate today = LocalDate.now();
-
         Habit habit = getOwnedHabitOrThrow(validatedUserId, validatedHabitId);
-
-        List<HabitLogDateView> logDates = habitLogRepository
-            .findAllProjectedByHabitIdAndDateLessThanEqualOrderByDateDesc(validatedHabitId, today);
-        if (logDates.isEmpty()) {
-            return 0;
-        }
-
-        return switch (habit.getFrequency()) {
-            case DAILY -> calculateDailyStreak(logDates);
-            case WEEKLY -> calculateWeeklyStreak(logDates);
-        };
+        return computeStreakSnapshot(habit).currentStreak();
     }
 
     public double calculateCompletionLast7Days(String authenticatedUserId, String habitId) {
@@ -236,6 +259,7 @@ public class HabitService {
         double completion = switch (habit.getFrequency()) {
             case DAILY -> calculateDailyCompletionLast7Days(logDates, fromDate, today);
             case WEEKLY -> calculateWeeklyCompletionLast7Days(logDates, fromDate, today);
+            case MONTHLY -> calculateMonthlyCompletionLast7Days(logDates, fromDate, today);
         };
 
         return roundToTwoDecimals(completion);
@@ -283,6 +307,27 @@ public class HabitService {
         return streak;
     }
 
+    private int calculateMonthlyStreak(List<HabitLogDateView> logDates) {
+        Set<YearMonth> completedMonths = new HashSet<>();
+
+        for (HabitLogDateView log : logDates) {
+            completedMonths.add(YearMonth.from(log.getDate()));
+        }
+
+        YearMonth currentMonth = YearMonth.from(LocalDate.now());
+        if (!completedMonths.contains(currentMonth)) {
+            return 0;
+        }
+
+        int streak = 0;
+        while (completedMonths.contains(currentMonth)) {
+            streak++;
+            currentMonth = currentMonth.minusMonths(1);
+        }
+
+        return streak;
+    }
+
     private double calculateDailyCompletionLast7Days(List<HabitLogDateView> logDates, LocalDate fromDate, LocalDate toDate) {
         Set<LocalDate> completedDates = new HashSet<>();
         for (HabitLogDateView log : logDates) {
@@ -320,6 +365,28 @@ public class HabitService {
         return completedWeekCount == 0 ? 0d : (completedWeekCount * 100d) / totalExpectedWeeks;
     }
 
+    private double calculateMonthlyCompletionLast7Days(List<HabitLogDateView> logDates, LocalDate fromDate, LocalDate toDate) {
+        Set<YearMonth> expectedMonths = new HashSet<>();
+        Set<YearMonth> completedMonths = new HashSet<>();
+
+        LocalDate currentDate = fromDate;
+        while (!currentDate.isAfter(toDate)) {
+            expectedMonths.add(YearMonth.from(currentDate));
+            currentDate = currentDate.plusDays(1);
+        }
+
+        for (HabitLogDateView log : logDates) {
+            LocalDate date = log.getDate();
+            if (!date.isBefore(fromDate) && !date.isAfter(toDate)) {
+                completedMonths.add(YearMonth.from(date));
+            }
+        }
+
+        int totalExpectedMonths = expectedMonths.size();
+        int completedMonthCount = completedMonths.size();
+        return completedMonthCount == 0 ? 0d : (completedMonthCount * 100d) / totalExpectedMonths;
+    }
+
     private double roundToTwoDecimals(double value) {
         return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).doubleValue();
     }
@@ -328,6 +395,24 @@ public class HabitService {
         int weekBasedYear = date.get(weekFields.weekBasedYear());
         int weekOfYear = date.get(weekFields.weekOfWeekBasedYear());
         return weekBasedYear + "-" + weekOfYear;
+    }
+
+    private StreakSnapshot computeStreakSnapshot(Habit habit) {
+        LocalDate today = LocalDate.now();
+        List<HabitLogDateView> logDates = habitLogRepository
+                .findAllProjectedByHabitIdAndDateLessThanEqualOrderByDateDesc(habit.getId(), today);
+
+        if (logDates.isEmpty()) {
+            return new StreakSnapshot(0, null);
+        }
+
+        int streak = switch (habit.getFrequency()) {
+            case DAILY -> calculateDailyStreak(logDates);
+            case WEEKLY -> calculateWeeklyStreak(logDates);
+            case MONTHLY -> calculateMonthlyStreak(logDates);
+        };
+
+        return new StreakSnapshot(streak, logDates.get(0).getDate());
     }
 
     private Habit getOwnedHabitOrThrow(String authenticatedUserId, String habitId) {

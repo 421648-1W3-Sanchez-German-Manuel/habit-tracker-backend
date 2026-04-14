@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +16,8 @@ import com.tp1.habittracker.domain.enums.HabitType;
 import com.tp1.habittracker.domain.enums.Frequency;
 import com.tp1.habittracker.domain.model.Habit;
 import com.tp1.habittracker.dto.habit.CreateHabitRequest;
+import com.tp1.habittracker.dto.habit.HabitStreakResponse;
+import com.tp1.habittracker.dto.habit.UpdateHabitRequest;
 import com.tp1.habittracker.exception.DuplicateResourceException;
 import com.tp1.habittracker.exception.ResourceNotFoundException;
 import com.tp1.habittracker.repository.HabitLogDateView;
@@ -146,6 +149,8 @@ class HabitServiceTest {
         List<Double> embedding = List.of(0.12, 0.34, 0.56);
 
         when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitSimilarityService.findDeterministicDuplicateForUserOrDefault(userId, "Drink water"))
+            .thenReturn(Optional.empty());
         when(ollamaClient.generateEmbedding("Drink water")).thenReturn(embedding);
         when(habitSimilarityService.findMostSimilarHabitForUserOrDefault(userId, embedding)).thenReturn(Optional.empty());
         when(habitRepository.save(any(Habit.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -164,6 +169,8 @@ class HabitServiceTest {
         List<Double> embedding = new ArrayList<>(List.of(0.9, 0.1));
 
         when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitSimilarityService.findDeterministicDuplicateForUserOrDefault(userId, "Read pages"))
+            .thenReturn(Optional.empty());
         when(ollamaClient.generateEmbedding("Read pages")).thenReturn(embedding);
         when(habitSimilarityService.findMostSimilarHabitForUserOrDefault(userId, embedding)).thenReturn(Optional.empty());
         when(habitRepository.save(any(Habit.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -304,6 +311,8 @@ class HabitServiceTest {
             .build();
 
         when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitSimilarityService.findDeterministicDuplicateForUserOrDefault(userId, "Hydration"))
+            .thenReturn(Optional.empty());
         when(ollamaClient.generateEmbedding("Hydration")).thenReturn(embedding);
         when(habitSimilarityService.findMostSimilarHabitForUserOrDefault(userId, embedding))
             .thenReturn(Optional.of(new HabitSimilarityService.HabitSimilarityMatch(similarHabit, 0.93)));
@@ -327,11 +336,165 @@ class HabitServiceTest {
             .build();
 
         when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitSimilarityService.findDeterministicDuplicateForUserOrDefault(userId, "Read 20 pages"))
+            .thenReturn(Optional.empty());
         when(ollamaClient.generateEmbedding("Read 20 pages")).thenReturn(embedding);
         when(habitSimilarityService.findMostSimilarHabitForUserOrDefault(userId, embedding))
             .thenReturn(Optional.of(new HabitSimilarityService.HabitSimilarityMatch(defaultHabit, 0.9)));
 
         assertThrows(DuplicateResourceException.class, () -> habitService.createHabit(userId, request));
+        }
+
+        @Test
+        void createHabitThrowsBeforeEmbeddingWhenDeterministicDuplicateExists() {
+        String userId = UUID.randomUUID().toString();
+        CreateHabitRequest request = new CreateHabitRequest(userId, "Drink water", HabitType.BOOLEAN, Frequency.DAILY);
+
+        Habit defaultHabit = Habit.builder()
+            .id("default-1")
+            .userId(null)
+            .name("Drink 2lt of water")
+            .type(HabitType.BOOLEAN)
+            .frequency(Frequency.DAILY)
+            .isDefault(true)
+            .build();
+
+        when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitSimilarityService.findDeterministicDuplicateForUserOrDefault(userId, "Drink water"))
+            .thenReturn(Optional.of(defaultHabit));
+
+        assertThrows(DuplicateResourceException.class, () -> habitService.createHabit(userId, request));
+
+        verifyNoInteractions(ollamaClient);
+        }
+
+    @Test
+    void addDefaultHabitToUserMarksSourceDefaultHabitId() {
+    String userId = UUID.randomUUID().toString();
+    Habit defaultHabit = Habit.builder()
+        .id("default-1")
+        .userId(null)
+        .name("Stretch")
+        .type(HabitType.BOOLEAN)
+        .frequency(Frequency.DAILY)
+        .isDefault(true)
+        .embedding(List.of(0.2, 0.4))
+        .build();
+
+    when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+    when(habitRepository.findByIdAndIsDefaultTrue("default-1")).thenReturn(Optional.of(defaultHabit));
+    when(habitRepository.findFirstByUserIdAndNameIgnoreCaseAndTypeAndFrequency(
+        userId,
+        "Stretch",
+        HabitType.BOOLEAN,
+        Frequency.DAILY
+    )).thenReturn(Optional.empty());
+    when(habitRepository.save(any(Habit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+    HabitService.AddDefaultHabitResult result = habitService.addDefaultHabitToUser(userId, "default-1");
+
+    assertEquals("default-1", result.habit().getSourceDefaultHabitId());
+    }
+
+    @Test
+    void updateHabitRejectsDefaultDerivedHabits() {
+    String userId = UUID.randomUUID().toString();
+    Habit habit = Habit.builder()
+        .id("habit-1")
+        .userId(userId)
+        .sourceDefaultHabitId("default-1")
+        .name("Drink water")
+        .type(HabitType.BOOLEAN)
+        .frequency(Frequency.DAILY)
+        .isDefault(false)
+        .build();
+
+    when(habitRepository.findById("habit-1")).thenReturn(Optional.of(habit));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> habitService.updateHabit(
+            userId,
+            "habit-1",
+            new UpdateHabitRequest("Hydrate", HabitType.TEXT, Frequency.WEEKLY)
+        )
+    );
+
+    verify(habitRepository, times(0)).save(any(Habit.class));
+    }
+
+    @Test
+    void updateHabitAllowsUserCreatedHabits() {
+    String userId = UUID.randomUUID().toString();
+    Habit habit = Habit.builder()
+        .id("habit-2")
+        .userId(userId)
+        .sourceDefaultHabitId(null)
+        .name("Drink water")
+        .type(HabitType.BOOLEAN)
+        .frequency(Frequency.DAILY)
+        .isDefault(false)
+        .build();
+
+    when(habitRepository.findById("habit-2")).thenReturn(Optional.of(habit));
+    when(ollamaClient.generateEmbedding("Hydrate")).thenReturn(List.of(0.1, 0.2, 0.3));
+    when(habitRepository.save(any(Habit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+    Habit updated = habitService.updateHabit(
+        userId,
+        "habit-2",
+        new UpdateHabitRequest("Hydrate", HabitType.TEXT, Frequency.WEEKLY)
+    );
+
+    assertEquals("Hydrate", updated.getName());
+    assertEquals("habit-2", updated.getId());
+    verify(habitRepository, times(1)).save(any(Habit.class));
+    }
+
+        @Test
+        void getHabitsWithStreaksReturnsStreakAndLastCompletedAtForOwnedHabits() {
+        LocalDate today = LocalDate.now();
+        String userId = UUID.randomUUID().toString();
+
+        Habit dailyHabit = Habit.builder()
+            .id("habit-1")
+            .userId(userId)
+            .frequency(Frequency.DAILY)
+            .build();
+
+        when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitRepository.findAllByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(dailyHabit));
+        when(habitLogRepository.findAllProjectedByHabitIdAndDateLessThanEqualOrderByDateDesc("habit-1", today))
+            .thenReturn(List.of(dateView(today), dateView(today.minusDays(1))));
+
+        List<HabitStreakResponse> response = habitService.getHabitsWithStreaks(userId);
+
+        assertEquals(1, response.size());
+        assertEquals("habit-1", response.get(0).habitId());
+        assertEquals(2, response.get(0).currentStreak());
+        assertEquals(today, response.get(0).lastCompletedAt());
+        }
+
+        @Test
+        void getHabitsWithStreaksReturnsZeroAndNullLastCompletedWhenNoLogsExist() {
+        String userId = UUID.randomUUID().toString();
+
+        Habit monthlyHabit = Habit.builder()
+            .id("habit-2")
+            .userId(userId)
+            .frequency(Frequency.MONTHLY)
+            .build();
+
+        when(userRepository.existsById(UUID.fromString(userId))).thenReturn(true);
+        when(habitRepository.findAllByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(monthlyHabit));
+        when(habitLogRepository.findAllProjectedByHabitIdAndDateLessThanEqualOrderByDateDesc(eq("habit-2"), any()))
+            .thenReturn(List.of());
+
+        List<HabitStreakResponse> response = habitService.getHabitsWithStreaks(userId);
+
+        assertEquals(1, response.size());
+        assertEquals(0, response.get(0).currentStreak());
+        assertEquals(null, response.get(0).lastCompletedAt());
         }
 
     private HabitLogDateView dateView(LocalDate date) {

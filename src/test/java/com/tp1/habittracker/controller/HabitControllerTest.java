@@ -10,10 +10,13 @@ import com.tp1.habittracker.domain.enums.Frequency;
 import com.tp1.habittracker.domain.enums.HabitType;
 import com.tp1.habittracker.domain.model.Habit;
 import com.tp1.habittracker.dto.habit.CheckSimilarityRequest;
+import com.tp1.habittracker.dto.habit.CheckSimilarityResponse;
 import com.tp1.habittracker.dto.habit.HabitResponse;
+import com.tp1.habittracker.dto.habit.HabitStreakResponse;
 import com.tp1.habittracker.service.HabitService;
 import com.tp1.habittracker.service.HabitSimilarityService;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -39,32 +42,45 @@ class HabitControllerTest {
     @SuppressWarnings("null")
     @Test
     void checkSimilarityReturnsHabitWhenFound() {
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn("user-1");
+
         Habit habit = Habit.builder()
                 .id("habit-1")
                 .userId("user-1")
                 .name("Drink water")
                 .type(HabitType.BOOLEAN)
                 .frequency(Frequency.DAILY)
+            .isDefault(false)
                 .createdAt(Instant.now())
                 .build();
 
-        when(habitSimilarityService.findMostSimilarHabit("Hydrate")).thenReturn(Optional.of(habit));
+        when(habitSimilarityService.findMostSimilarHabitForUserOrDefault("user-1", "Hydrate"))
+            .thenReturn(Optional.of(new HabitSimilarityService.HabitSimilarityMatch(habit, 0.91d)));
 
-        ResponseEntity<?> response = controller.checkSimilarity(new CheckSimilarityRequest("Hydrate"));
+        ResponseEntity<?> response = controller.checkSimilarity(authentication, new CheckSimilarityRequest("Hydrate"));
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertTrue(response.getBody() instanceof HabitResponse);
+        assertTrue(response.getBody() instanceof CheckSimilarityResponse);
 
-        HabitResponse body = (HabitResponse) response.getBody();
-        assertEquals("habit-1", body.id());
-        assertEquals("Drink water", body.name());
+        CheckSimilarityResponse body = (CheckSimilarityResponse) response.getBody();
+        assertEquals("habit-1", body.habit().id());
+        assertEquals("Drink water", body.habit().name());
+        assertEquals("My Habits", body.belongsTo());
     }
 
     @Test
     void checkSimilarityReturnsNotFoundWhenNoSimilarHabitExists() {
-        when(habitSimilarityService.findMostSimilarHabit("Completely different")).thenReturn(Optional.empty());
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn("user-1");
 
-        ResponseEntity<?> response = controller.checkSimilarity(new CheckSimilarityRequest("Completely different"));
+        when(habitSimilarityService.findMostSimilarHabitForUserOrDefault("user-1", "Completely different"))
+            .thenReturn(Optional.empty());
+
+        ResponseEntity<?> response = controller.checkSimilarity(
+            authentication,
+            new CheckSimilarityRequest("Completely different")
+        );
 
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
         assertTrue(response.getBody() instanceof Map<?, ?>);
@@ -72,13 +88,13 @@ class HabitControllerTest {
     }
 
     @Test
-    void checkSimilarityThrowsWhenRequestIsNull() {
+        void checkSimilarityThrowsWhenAuthenticationIsMissing() {
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
-                () -> controller.checkSimilarity(null)
+            () -> controller.checkSimilarity(null, new CheckSimilarityRequest("Hydrate"))
         );
 
-        assertEquals("Similarity request is required", exception.getMessage());
+        assertEquals("Authenticated user is required", exception.getMessage());
     }
 
     @Test
@@ -149,5 +165,21 @@ class HabitControllerTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("habit-existing", response.getBody().id());
+    }
+
+    @Test
+    void getHabitsWithStreaksReturnsCurrentUserStreaks() {
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getName()).thenReturn("user-1");
+
+        HabitStreakResponse streakResponse = new HabitStreakResponse("habit-1", 4, LocalDate.of(2026, 4, 14));
+        when(habitService.getHabitsWithStreaks("user-1")).thenReturn(List.of(streakResponse));
+
+        List<HabitStreakResponse> response = controller.getHabitsWithStreaks(authentication);
+
+        assertEquals(1, response.size());
+        assertEquals("habit-1", response.get(0).habitId());
+        assertEquals(4, response.get(0).currentStreak());
+        assertEquals(LocalDate.of(2026, 4, 14), response.get(0).lastCompletedAt());
     }
 }

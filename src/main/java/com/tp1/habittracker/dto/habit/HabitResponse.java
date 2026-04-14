@@ -7,6 +7,7 @@ import java.time.Instant;
 public record HabitResponse(
         String id,
         String userId,
+        String sourceDefaultHabitId,
         String name,
         HabitType type,
         Frequency frequency,
